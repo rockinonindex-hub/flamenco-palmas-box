@@ -67,7 +67,7 @@ const DEFAULT_PALOS = [
     beats: 4,
     tempo: 82,
     countFrom: 1,
-    pattern: ["accent", "soft", "accent", "soft"],
+    pattern: ["soft", "accent", "soft", "accent"],
     offbeatEnabled: false,
     offbeatPattern: ["ghost", "ghost", "ghost", "ghost"],
   },
