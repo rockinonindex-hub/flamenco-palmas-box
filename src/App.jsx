@@ -8,6 +8,8 @@ const DEFAULT_PALOS = [
     tempo: 92,
     countFrom: 1,
     pattern: ["soft", "soft", "accent", "soft", "soft", "accent", "soft", "accent", "soft", "accent", "soft", "accent"],
+    offbeatEnabled: false,
+    offbeatPattern: ["rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest"],
   },
   {
     id: "alegrias",
@@ -16,6 +18,8 @@ const DEFAULT_PALOS = [
     tempo: 132,
     countFrom: 1,
     pattern: ["soft", "soft", "accent", "soft", "soft", "accent", "soft", "accent", "soft", "accent", "soft", "accent"],
+    offbeatEnabled: false,
+    offbeatPattern: ["rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost"],
   },
   {
     id: "bulerias",
@@ -24,6 +28,8 @@ const DEFAULT_PALOS = [
     tempo: 180,
     countFrom: 12,
     pattern: ["accent", "soft", "soft", "accent", "soft", "soft", "accent", "accent", "soft", "accent", "soft", "soft"],
+    offbeatEnabled: false,
+    offbeatPattern: ["rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost"],
   },
   {
     id: "solea-por-bulerias",
@@ -32,6 +38,8 @@ const DEFAULT_PALOS = [
     tempo: 150,
     countFrom: 12,
     pattern: ["accent", "soft", "soft", "accent", "soft", "soft", "accent", "accent", "soft", "accent", "soft", "soft"],
+    offbeatEnabled: false,
+    offbeatPattern: ["rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost", "rest", "ghost"],
   },
   {
     id: "seguiriya",
@@ -40,6 +48,8 @@ const DEFAULT_PALOS = [
     tempo: 110,
     countFrom: 1,
     pattern: ["accent", "soft", "accent", "soft", "accent", "soft", "soft", "accent", "soft", "soft", "accent", "soft"],
+    offbeatEnabled: false,
+    offbeatPattern: ["rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest", "rest"],
   },
   {
     id: "tangos",
@@ -48,6 +58,8 @@ const DEFAULT_PALOS = [
     tempo: 104,
     countFrom: 1,
     pattern: ["accent", "soft", "accent", "soft"],
+    offbeatEnabled: false,
+    offbeatPattern: ["ghost", "ghost", "ghost", "ghost"],
   },
   {
     id: "tientos",
@@ -56,6 +68,8 @@ const DEFAULT_PALOS = [
     tempo: 82,
     countFrom: 1,
     pattern: ["accent", "soft", "accent", "soft"],
+    offbeatEnabled: false,
+    offbeatPattern: ["ghost", "ghost", "ghost", "ghost"],
   },
   {
     id: "rumba",
@@ -63,7 +77,9 @@ const DEFAULT_PALOS = [
     beats: 4,
     tempo: 112,
     countFrom: 1,
-    pattern: ["accent", "ghost", "soft", "soft"],
+    pattern: ["accent", "rest", "soft", "soft"],
+    offbeatEnabled: true,
+    offbeatPattern: ["ghost", "ghost", "ghost", "ghost"],
   },
   {
     id: "sevillanas",
@@ -72,6 +88,8 @@ const DEFAULT_PALOS = [
     tempo: 124,
     countFrom: 1,
     pattern: ["accent", "soft", "soft"],
+    offbeatEnabled: false,
+    offbeatPattern: ["rest", "rest", "rest"],
   },
   {
     id: "fandangos",
@@ -80,11 +98,15 @@ const DEFAULT_PALOS = [
     tempo: 116,
     countFrom: 1,
     pattern: ["accent", "soft", "soft"],
+    offbeatEnabled: false,
+    offbeatPattern: ["rest", "rest", "rest"],
   },
 ];
 
-const STORAGE_KEY = "flamenco-palmas-rhythm-box-v2";
+const STORAGE_KEY = "flamenco-palmas-rhythm-box-v3";
+const OLD_STORAGE_KEYS = ["flamenco-palmas-rhythm-box-v2"];
 const VALID_HITS = ["accent", "soft", "ghost", "rest"];
+const VALID_OFFBEAT_HITS = ["soft", "ghost", "rest"];
 
 function labelForBeat(index, beats, countFrom) {
   if (beats === 12 && countFrom === 12) {
@@ -98,6 +120,12 @@ function nextHit(value) {
   if (value === "rest") return "ghost";
   if (value === "ghost") return "soft";
   return "accent";
+}
+
+function nextOffbeatHit(value) {
+  if (value === "rest") return "ghost";
+  if (value === "ghost") return "soft";
+  return "rest";
 }
 
 function hitLabel(value) {
@@ -137,12 +165,21 @@ function hitStyle(value) {
   return styles[value] || styles.rest;
 }
 
+function normalizePattern(pattern, beats, validHits, defaultHit = "soft") {
+  return Array.from({ length: beats }, (_, index) => {
+    const hit = Array.isArray(pattern) ? pattern[index] : null;
+    return validHits.includes(hit) ? hit : index === 0 ? defaultHit : defaultHit;
+  });
+}
+
 function normalizePalo(palo) {
   const beats = [3, 4, 12].includes(Number(palo.beats)) ? Number(palo.beats) : 12;
   const pattern = Array.from({ length: beats }, (_, index) => {
     const hit = Array.isArray(palo.pattern) ? palo.pattern[index] : null;
     return VALID_HITS.includes(hit) ? hit : index === 0 ? "accent" : "soft";
   });
+
+  const offbeatPattern = normalizePattern(palo.offbeatPattern, beats, VALID_OFFBEAT_HITS, "ghost");
 
   return {
     id: String(palo.id || `palo-${Date.now()}`),
@@ -151,6 +188,8 @@ function normalizePalo(palo) {
     tempo: Number.isFinite(Number(palo.tempo)) ? Math.min(240, Math.max(40, Number(palo.tempo))) : 100,
     countFrom: beats === 12 && Number(palo.countFrom) === 12 ? 12 : 1,
     pattern,
+    offbeatEnabled: Boolean(palo.offbeatEnabled),
+    offbeatPattern,
   };
 }
 
@@ -168,9 +207,15 @@ function runSelfTests() {
   test("hit cycle rest to ghost", nextHit("rest") === "ghost");
   test("hit cycle ghost to soft", nextHit("ghost") === "soft");
   test("hit cycle soft to accent", nextHit("soft") === "accent");
-  test("default patterns match beat length", DEFAULT_PALOS.every((p) => p.pattern.length === p.beats));
-  test("default hits are valid", DEFAULT_PALOS.every((p) => p.pattern.every((hit) => VALID_HITS.includes(hit))));
-  test("normalize repairs bad pattern length", normalizePalo({ id: "x", name: "X", beats: 4, pattern: ["accent"] }).pattern.length === 4);
+  test("offbeat cycle rest to ghost", nextOffbeatHit("rest") === "ghost");
+  test("offbeat cycle ghost to soft", nextOffbeatHit("ghost") === "soft");
+  test("offbeat cycle soft to rest", nextOffbeatHit("soft") === "rest");
+  test("default main patterns match beat length", DEFAULT_PALOS.every((p) => p.pattern.length === p.beats));
+  test("default offbeat patterns match beat length", DEFAULT_PALOS.every((p) => p.offbeatPattern.length === p.beats));
+  test("default main hits are valid", DEFAULT_PALOS.every((p) => p.pattern.every((hit) => VALID_HITS.includes(hit))));
+  test("default offbeat hits are valid", DEFAULT_PALOS.every((p) => p.offbeatPattern.every((hit) => VALID_OFFBEAT_HITS.includes(hit))));
+  test("normalize repairs bad main pattern length", normalizePalo({ id: "x", name: "X", beats: 4, pattern: ["accent"] }).pattern.length === 4);
+  test("normalize repairs bad offbeat pattern length", normalizePalo({ id: "x", name: "X", beats: 4, offbeatPattern: ["ghost"] }).offbeatPattern.length === 4);
 
   if (failures.length) {
     console.error("Flamenco Compás Box self-test failures:", failures);
@@ -183,16 +228,17 @@ function Icon({ children }) {
   return <span style={{ display: "inline-block", width: 20, textAlign: "center" }}>{children}</span>;
 }
 
-function AppButton({ children, onClick, disabled, variant = "solid", style = {} }) {
+function AppButton({ children, onClick, disabled, variant = "solid", active = false, style = {} }) {
+  const isSolid = variant === "solid" || active;
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       style={{
-        border: `1px solid ${variant === "solid" ? "#18181b" : "#d4d4d8"}`,
-        background: variant === "solid" ? "#18181b" : "white",
-        color: variant === "solid" ? "white" : "#18181b",
+        border: `1px solid ${isSolid ? "#18181b" : "#d4d4d8"}`,
+        background: isSolid ? "#18181b" : "white",
+        color: isSolid ? "white" : "#18181b",
         padding: "10px 14px",
         borderRadius: 16,
         cursor: disabled ? "not-allowed" : "pointer",
@@ -285,7 +331,9 @@ export default function FlamencoPalmasRhythmBox() {
   const [tempo, setTempo] = useState(92);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentBeat, setCurrentBeat] = useState(-1);
+  const [currentOffbeat, setCurrentOffbeat] = useState(-1);
   const [volume, setVolume] = useState(0.8);
+  const [offbeatVolume, setOffbeatVolume] = useState(0.55);
   const [swing, setSwing] = useState(0);
   const [status, setStatus] = useState("Ready");
 
@@ -296,6 +344,7 @@ export default function FlamencoPalmasRhythmBox() {
   const tempoRef = useRef(tempo);
   const selectedRef = useRef(null);
   const volumeRef = useRef(volume);
+  const offbeatVolumeRef = useRef(offbeatVolume);
   const swingRef = useRef(swing);
 
   const selected = useMemo(() => palos.find((p) => p.id === selectedId) || palos[0], [palos, selectedId]);
@@ -303,7 +352,7 @@ export default function FlamencoPalmasRhythmBox() {
   useEffect(() => {
     runSelfTests();
 
-    const saved = safeLocalStorageGet(STORAGE_KEY);
+    const saved = safeLocalStorageGet(STORAGE_KEY) || OLD_STORAGE_KEYS.map((key) => safeLocalStorageGet(key)).find(Boolean);
     if (!saved) return;
 
     try {
@@ -317,6 +366,7 @@ export default function FlamencoPalmasRhythmBox() {
       }
       if (typeof parsed.tempo === "number") setTempo(Math.min(240, Math.max(40, parsed.tempo)));
       if (typeof parsed.volume === "number") setVolume(Math.min(1, Math.max(0, parsed.volume)));
+      if (typeof parsed.offbeatVolume === "number") setOffbeatVolume(Math.min(1, Math.max(0, parsed.offbeatVolume)));
       if (typeof parsed.swing === "number") setSwing(Math.min(70, Math.max(0, parsed.swing)));
       setStatus("Saved settings loaded");
     } catch (_) {
@@ -328,14 +378,16 @@ export default function FlamencoPalmasRhythmBox() {
     tempoRef.current = tempo;
     selectedRef.current = selected;
     volumeRef.current = volume;
+    offbeatVolumeRef.current = offbeatVolume;
     swingRef.current = swing;
-  }, [tempo, selected, volume, swing]);
+  }, [tempo, selected, volume, offbeatVolume, swing]);
 
   useEffect(() => {
     if (!selected) return;
     setTempo(selected.tempo);
     beatRef.current = 0;
     setCurrentBeat(-1);
+    setCurrentOffbeat(-1);
   }, [selectedId]);
 
   useEffect(() => {
@@ -372,7 +424,7 @@ export default function FlamencoPalmasRhythmBox() {
     return buffer;
   }
 
-  function playClap(time, type) {
+  function playClap(time, type, layer = "main") {
     if (type === "rest") return;
 
     const ctx = ensureAudio();
@@ -382,15 +434,17 @@ export default function FlamencoPalmasRhythmBox() {
     const gain = ctx.createGain();
     const filter = ctx.createBiquadFilter();
 
-    source.buffer = noiseBuffer(ctx, type === "accent" ? 0.06 : 0.04);
+    const isOffbeat = layer === "offbeat";
+    source.buffer = noiseBuffer(ctx, type === "accent" ? 0.06 : isOffbeat ? 0.032 : 0.04);
     filter.type = "bandpass";
-    filter.frequency.value = type === "accent" ? 1900 : type === "ghost" ? 1200 : 1500;
+    filter.frequency.value = type === "accent" ? 1900 : type === "ghost" ? (isOffbeat ? 1350 : 1200) : 1500;
     filter.Q.value = type === "accent" ? 1.25 : 0.9;
 
-    const amp = type === "accent" ? 0.85 : type === "ghost" ? 0.22 : 0.48;
+    const baseAmp = type === "accent" ? 0.85 : type === "ghost" ? 0.22 : 0.48;
+    const layerVolume = isOffbeat ? offbeatVolumeRef.current : volumeRef.current;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, amp * volumeRef.current), time + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + (type === "accent" ? 0.075 : 0.05));
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, baseAmp * layerVolume), time + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + (type === "accent" ? 0.075 : isOffbeat ? 0.04 : 0.05));
 
     source.connect(filter);
     filter.connect(gain);
@@ -407,15 +461,27 @@ export default function FlamencoPalmasRhythmBox() {
     while (nextTimeRef.current < ctx.currentTime + lookAhead) {
       const beatIndex = beatRef.current % palo.beats;
       const hit = palo.pattern[beatIndex] || "rest";
-      playClap(nextTimeRef.current, hit);
-
-      const uiDelay = Math.max(0, (nextTimeRef.current - ctx.currentTime) * 1000);
-      window.setTimeout(() => setCurrentBeat(beatIndex), uiDelay);
+      playClap(nextTimeRef.current, hit, "main");
 
       const base = 60 / tempoRef.current;
       const swingAmount = swingRef.current / 100;
       const addSwing = beatIndex % 2 === 0 ? base * swingAmount * 0.18 : -base * swingAmount * 0.18;
-      nextTimeRef.current += Math.max(0.08, base + addSwing);
+      const beatDuration = Math.max(0.08, base + addSwing);
+
+      if (palo.offbeatEnabled) {
+        const offbeatHit = palo.offbeatPattern[beatIndex] || "rest";
+        const offbeatTime = nextTimeRef.current + beatDuration / 2;
+        playClap(offbeatTime, offbeatHit, "offbeat");
+
+        const offbeatDelay = Math.max(0, (offbeatTime - ctx.currentTime) * 1000);
+        window.setTimeout(() => setCurrentOffbeat(beatIndex), offbeatDelay);
+        window.setTimeout(() => setCurrentOffbeat(-1), offbeatDelay + Math.min(120, beatDuration * 500));
+      }
+
+      const uiDelay = Math.max(0, (nextTimeRef.current - ctx.currentTime) * 1000);
+      window.setTimeout(() => setCurrentBeat(beatIndex), uiDelay);
+
+      nextTimeRef.current += beatDuration;
       beatRef.current += 1;
     }
   }
@@ -437,6 +503,7 @@ export default function FlamencoPalmasRhythmBox() {
     setIsPlaying(false);
     setStatus("Stopped");
     setCurrentBeat(-1);
+    setCurrentOffbeat(-1);
     beatRef.current = 0;
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = null;
@@ -453,10 +520,26 @@ export default function FlamencoPalmasRhythmBox() {
     }));
   }
 
+  function updateOffbeatPattern(index) {
+    updateSelectedPalo((p) => ({
+      ...p,
+      offbeatPattern: p.offbeatPattern.map((hit, i) => (i === index ? nextOffbeatHit(hit) : hit)),
+    }));
+  }
+
+  function toggleOffbeat() {
+    updateSelectedPalo((p) => ({ ...p, offbeatEnabled: !p.offbeatEnabled }));
+    setCurrentOffbeat(-1);
+  }
+
+  function setAllOffbeats(value) {
+    updateSelectedPalo((p) => ({ ...p, offbeatPattern: Array.from({ length: p.beats }, () => value) }));
+  }
+
   function savePreset() {
     const updatedPalos = palos.map((p) => (p.id === selectedId ? { ...p, tempo } : p)).map(normalizePalo);
     setPalos(updatedPalos);
-    safeLocalStorageSet(STORAGE_KEY, JSON.stringify({ palos: updatedPalos, selectedId, tempo, volume, swing }));
+    safeLocalStorageSet(STORAGE_KEY, JSON.stringify({ palos: updatedPalos, selectedId, tempo, volume, offbeatVolume, swing }));
     setStatus("Saved");
   }
 
@@ -466,8 +549,10 @@ export default function FlamencoPalmasRhythmBox() {
     setSelectedId("solea");
     setTempo(92);
     setVolume(0.8);
+    setOffbeatVolume(0.55);
     setSwing(0);
     safeLocalStorageRemove(STORAGE_KEY);
+    OLD_STORAGE_KEYS.forEach(safeLocalStorageRemove);
     setStatus("Reset to defaults");
   }
 
@@ -480,6 +565,8 @@ export default function FlamencoPalmasRhythmBox() {
       tempo,
       countFrom: 1,
       pattern: Array.from({ length: 12 }, (_, i) => (i === 0 ? "accent" : "soft")),
+      offbeatEnabled: false,
+      offbeatPattern: Array.from({ length: 12 }, () => "ghost"),
     });
     setPalos((prev) => [...prev, custom]);
     setSelectedId(id);
@@ -501,10 +588,12 @@ export default function FlamencoPalmasRhythmBox() {
   function changeBeats(beats) {
     updateSelectedPalo((p) => {
       const nextPattern = Array.from({ length: beats }, (_, i) => p.pattern[i] || (i === 0 ? "accent" : "soft"));
-      return { ...p, beats, pattern: nextPattern, countFrom: beats === 12 ? p.countFrom : 1 };
+      const nextOffbeatPattern = Array.from({ length: beats }, (_, i) => p.offbeatPattern[i] || "ghost");
+      return { ...p, beats, pattern: nextPattern, offbeatPattern: nextOffbeatPattern, countFrom: beats === 12 ? p.countFrom : 1 };
     });
     beatRef.current = 0;
     setCurrentBeat(-1);
+    setCurrentOffbeat(-1);
   }
 
   function changeTempo(nextTempo) {
@@ -550,7 +639,7 @@ export default function FlamencoPalmasRhythmBox() {
               Flamenco Compás Box
             </h1>
             <p style={{ color: "#52525b", marginTop: 10, marginBottom: 0 }}>
-              パロごとのパルマを鳴らす、練習用リズムボックス。外部ライブラリなしで動きます。
+              パロごとのパルマを鳴らす、練習用リズムボックス。裏拍あり・なしを切り替えられます。
             </p>
           </div>
 
@@ -591,8 +680,10 @@ export default function FlamencoPalmasRhythmBox() {
           </div>
 
           <div style={{ display: "grid", gap: 8 }}>
-            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Volume: {Math.round(volume * 100)}%</label>
+            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Main Volume: {Math.round(volume * 100)}%</label>
             <input type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => setVolume(Number(e.target.value))} style={{ width: "100%" }} />
+            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Offbeat Volume: {Math.round(offbeatVolume * 100)}%</label>
+            <input type="range" min="0" max="1" step="0.01" value={offbeatVolume} onChange={(e) => setOffbeatVolume(Number(e.target.value))} style={{ width: "100%" }} />
             <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Humanize / Swing: {swing}%</label>
             <input type="range" min="0" max="70" value={swing} onChange={(e) => setSwing(Number(e.target.value))} style={{ width: "100%" }} />
           </div>
@@ -616,7 +707,7 @@ export default function FlamencoPalmasRhythmBox() {
                 }}
               />
               <p style={{ fontSize: 14, color: "#71717a", marginTop: 4, marginBottom: 0 }}>
-                丸をクリックすると 強 → 休 → 裏 → 弱 → 強 と切り替わります。
+                上段は表拍、下段は「&」の裏拍。クリックで音を切り替えます。
               </p>
             </div>
 
@@ -636,6 +727,10 @@ export default function FlamencoPalmasRhythmBox() {
                   <option value={12}>count 12-11</option>
                 </select>
               )}
+              <AppButton variant="outline" active={selected.offbeatEnabled} onClick={toggleOffbeat}>
+                <Icon>{selected.offbeatEnabled ? "&" : "–"}</Icon>
+                {selected.offbeatEnabled ? "Offbeat ON" : "Offbeat OFF"}
+              </AppButton>
               <AppButton variant="outline" onClick={addCustomPalo}>Custom</AppButton>
               <AppButton variant="outline" onClick={deleteCustomPalo} disabled={!selected.id.startsWith("custom")}>
                 <Icon>🗑</Icon> Delete
@@ -656,7 +751,7 @@ export default function FlamencoPalmasRhythmBox() {
               return (
                 <button
                   type="button"
-                  key={`${selected.id}-${i}`}
+                  key={`${selected.id}-main-${i}`}
                   onClick={() => updatePattern(i)}
                   aria-label={`Beat ${labelForBeat(i, selected.beats, selected.countFrom)} ${hitLabel(hit)}`}
                   style={{
@@ -695,10 +790,63 @@ export default function FlamencoPalmasRhythmBox() {
             })}
           </div>
 
+          <div style={{ marginTop: 18, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: selected.offbeatEnabled ? "#18181b" : "#a1a1aa" }}>
+              Offbeat row: {selected.offbeatEnabled ? "ON" : "OFF"}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <AppButton variant="outline" onClick={() => setAllOffbeats("ghost")}>All 裏</AppButton>
+              <AppButton variant="outline" onClick={() => setAllOffbeats("soft")}>All 弱</AppButton>
+              <AppButton variant="outline" onClick={() => setAllOffbeats("rest")}>All 休</AppButton>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))",
+              gap: 12,
+              marginTop: 12,
+              opacity: selected.offbeatEnabled ? 1 : 0.55,
+            }}
+          >
+            {selected.offbeatPattern.map((hit, i) => {
+              const active = currentOffbeat === i;
+              return (
+                <button
+                  type="button"
+                  key={`${selected.id}-offbeat-${i}`}
+                  onClick={() => updateOffbeatPattern(i)}
+                  aria-label={`Offbeat after ${labelForBeat(i, selected.beats, selected.countFrom)} ${hitLabel(hit)}`}
+                  style={{
+                    position: "relative",
+                    borderRadius: 20,
+                    border: "1px solid",
+                    padding: 10,
+                    minHeight: 82,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    cursor: "pointer",
+                    transform: active ? "scale(1.04)" : "scale(1)",
+                    boxShadow: active ? "0 0 0 5px rgba(161,161,170,0.25)" : "none",
+                    transition: "transform 120ms ease, box-shadow 120ms ease",
+                    ...hitStyle(hit),
+                  }}
+                >
+                  <span style={{ fontSize: 12, opacity: 0.65 }}>& after</span>
+                  <span style={{ fontSize: 24, fontWeight: 950 }}>{labelForBeat(i, selected.beats, selected.countFrom)}</span>
+                  <span style={{ fontSize: 14, fontWeight: 800 }}>{hitLabel(hit)}</span>
+                </button>
+              );
+            })}
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 20, fontSize: 14 }}>
-            <div style={{ borderRadius: 16, background: "#18181b", color: "white", padding: 12 }}>強：乾いた大きめのパルマ</div>
-            <div style={{ borderRadius: 16, background: "white", border: "1px solid #d4d4d8", padding: 12 }}>弱：軽いパルマ</div>
-            <div style={{ borderRadius: 16, background: "#f4f4f5", border: "1px dashed #a1a1aa", padding: 12 }}>裏：小さな補助音</div>
+            <div style={{ borderRadius: 16, background: "#18181b", color: "white", padding: 12 }}>強：乾いた大きめの表パルマ</div>
+            <div style={{ borderRadius: 16, background: "white", border: "1px solid #d4d4d8", padding: 12 }}>弱：軽い表パルマ</div>
+            <div style={{ borderRadius: 16, background: "#f4f4f5", border: "1px dashed #a1a1aa", padding: 12 }}>裏：小さな裏拍パルマ</div>
             <div style={{ borderRadius: 16, background: "#fafafa", border: "1px solid #e4e4e7", color: "#a1a1aa", padding: 12 }}>休：鳴らさない</div>
           </div>
         </div>
