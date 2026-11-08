@@ -1,11 +1,10 @@
+import { resolveBeatHit } from "./audio.js";
+
 export const LOOKAHEAD_SECONDS = 0.12;
 export const TIMER_INTERVAL_MS = 25;
 
-export function beatDuration(palo, tempo, swing, beat) {
-  const base = 60 / tempo;
-  // Preserve the existing alternating swing, normalized for odd-length compases.
-  const mean = palo.beats % 2 === 0 ? 0 : 1 / palo.beats;
-  return base * (1 + ((beat % 2 === 0 ? 1 : -1) - mean) * (swing / 100) * 0.18);
+export function beatDuration(_palo, tempo) {
+  return 60 / tempo;
 }
 
 // The interval only fills the Web Audio queue. Neither React nor rAF owns time.
@@ -22,6 +21,7 @@ export class LookaheadTransport {
     this.half = 0;
     this.nextTime = 0;
     this.duration = 0;
+    this.offbeatPhase = 0.5;
   }
 
   start() {
@@ -47,19 +47,25 @@ export class LookaheadTransport {
         const audible = this.nextTime >= now;
         if (this.half === 0) {
           this.duration = beatDuration(palo, tempo, swing, this.beat);
+          // Keep the existing Swing control, moving only the offbeat so the
+          // main clock always has the specified 60 / BPM spacing.
+          this.offbeatPhase = 0.5 + (swing / 100) * 0.18;
           if (audible) {
-            this.synth.playHit(this.nextTime, palo.pattern[this.beat] || "rest", volume);
-            this.onBeat({ time: this.nextTime, duration: this.duration, beat: this.beat, beats: palo.beats, offbeat: palo.offbeatEnabled });
+            const { hit, velocity } = resolveBeatHit(palo, this.beat);
+            this.synth.playHit(this.nextTime, hit, volume, false, this.beat, velocity);
+            this.onBeat({ time: this.nextTime, duration: this.duration, beat: this.beat, beats: palo.beats, offbeat: palo.offbeatEnabled, offbeatPhase: this.offbeatPhase });
           }
           this.half = 1;
+          this.nextTime += this.duration * this.offbeatPhase;
         } else {
           if (audible && palo.offbeatEnabled) {
-            this.synth.playHit(this.nextTime, palo.offbeatPattern[this.beat] || "rest", offbeatVolume, true);
+            const { hit, velocity } = resolveBeatHit(palo, this.beat, true);
+            this.synth.playHit(this.nextTime, hit, offbeatVolume, true, this.beat, velocity);
           }
           this.beat = (this.beat + 1) % palo.beats;
           this.half = 0;
+          this.nextTime += this.duration * (1 - this.offbeatPhase);
         }
-        this.nextTime += this.duration / 2;
       }
     } catch (error) {
       this.stop();
