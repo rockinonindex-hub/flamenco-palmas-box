@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import CompasCircle from "./components/CompasCircle.jsx";
 import { useCompasDisplay } from "./hooks/useCompasDisplay.js";
 import "./styles.css";
+import { CompasSynth, DEFAULT_MIXER, normalizeMixer } from "./audio.js";
+import VoiceMixer from "./components/VoiceMixer.jsx";
 
 const DEFAULT_PALOS = [
   {
@@ -228,7 +230,7 @@ function runSelfTests() {
 }
 
 function Icon({ children }) {
-  return <span style={{ display: "inline-block", width: 20, textAlign: "center" }}>{children}</span>;
+  return <span aria-hidden="true" style={{ display: "inline-block", width: 20, textAlign: "center" }}>{children}</span>;
 }
 
 function AppButton({ children, onClick, disabled, variant = "solid", active = false, style = {} }) {
@@ -339,8 +341,10 @@ export default function FlamencoPalmasRhythmBox() {
   const [offbeatVolume, setOffbeatVolume] = useState(0.55);
   const [swing, setSwing] = useState(0);
   const [status, setStatus] = useState("Ready");
+  const [mixer, setMixer] = useState(DEFAULT_MIXER);
 
   const audioRef = useRef(null);
+  const synthRef = useRef(null);
   const timelineRef = useRef([]);
   const { beat: currentBeat, offbeat: currentOffbeat, cursorRef } = useCompasDisplay(audioRef, timelineRef, isPlaying);
   const timerRef = useRef(null);
@@ -372,6 +376,7 @@ export default function FlamencoPalmasRhythmBox() {
       if (typeof parsed.tempo === "number") setTempo(Math.min(240, Math.max(40, parsed.tempo)));
       if (typeof parsed.volume === "number") setVolume(Math.min(1, Math.max(0, parsed.volume)));
       if (typeof parsed.offbeatVolume === "number") setOffbeatVolume(Math.min(1, Math.max(0, parsed.offbeatVolume)));
+      setMixer(normalizeMixer(parsed.mixer));
       if (typeof parsed.swing === "number") setSwing(Math.min(70, Math.max(0, parsed.swing)));
       setStatus("Saved settings loaded");
     } catch (_) {
@@ -388,6 +393,10 @@ export default function FlamencoPalmasRhythmBox() {
   }, [tempo, selected, volume, offbeatVolume, swing]);
 
   useEffect(() => {
+    synthRef.current?.setMixer(mixer);
+  }, [mixer]);
+
+  useEffect(() => {
     if (!selected) return;
     setTempo(selected.tempo);
     beatRef.current = 0;
@@ -398,6 +407,8 @@ export default function FlamencoPalmasRhythmBox() {
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current);
       timerRef.current = null;
+      synthRef.current?.dispose();
+      audioRef.current?.close().catch(() => {});
     };
   }, []);
 
@@ -411,49 +422,15 @@ export default function FlamencoPalmasRhythmBox() {
 
     if (!audioRef.current) {
       audioRef.current = new AudioContextClass();
+      synthRef.current = new CompasSynth(audioRef.current, mixer);
     }
     if (audioRef.current.state === "suspended") audioRef.current.resume();
     return audioRef.current;
   }
 
-  function noiseBuffer(ctx, seconds = 0.045) {
-    const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    for (let i = 0; i < data.length; i += 1) {
-      const fade = Math.pow(1 - i / data.length, 2.2);
-      data[i] = (Math.random() * 2 - 1) * fade;
-    }
-    return buffer;
-  }
-
   function playClap(time, type, layer = "main") {
-    if (type === "rest") return;
-
-    const ctx = ensureAudio();
-    if (!ctx) return;
-
-    const source = ctx.createBufferSource();
-    const gain = ctx.createGain();
-    const filter = ctx.createBiquadFilter();
-
-    const isOffbeat = layer === "offbeat";
-    source.buffer = noiseBuffer(ctx, type === "accent" ? 0.06 : isOffbeat ? 0.032 : 0.04);
-    filter.type = "bandpass";
-    filter.frequency.value = type === "accent" ? 1900 : type === "ghost" ? (isOffbeat ? 1350 : 1200) : 1500;
-    filter.Q.value = type === "accent" ? 1.25 : 0.9;
-
-    const baseAmp = type === "accent" ? 0.85 : type === "ghost" ? 0.22 : 0.48;
-    const layerVolume = isOffbeat ? offbeatVolumeRef.current : volumeRef.current;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, baseAmp * layerVolume), time + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + (type === "accent" ? 0.075 : isOffbeat ? 0.04 : 0.05));
-
-    source.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    source.start(time);
+    const layerVolume = layer === "offbeat" ? offbeatVolumeRef.current : volumeRef.current;
+    synthRef.current?.playHit(time, type, layerVolume, layer === "offbeat");
   }
 
   function schedule() {
@@ -504,6 +481,7 @@ export default function FlamencoPalmasRhythmBox() {
     setIsPlaying(false);
     setStatus("Stopped");
     timelineRef.current = [];
+    synthRef.current?.stop();
     beatRef.current = 0;
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = null;
@@ -538,7 +516,7 @@ export default function FlamencoPalmasRhythmBox() {
   function savePreset() {
     const updatedPalos = palos.map((p) => (p.id === selectedId ? { ...p, tempo } : p)).map(normalizePalo);
     setPalos(updatedPalos);
-    safeLocalStorageSet(STORAGE_KEY, JSON.stringify({ palos: updatedPalos, selectedId, tempo, volume, offbeatVolume, swing }));
+    safeLocalStorageSet(STORAGE_KEY, JSON.stringify({ palos: updatedPalos, selectedId, tempo, volume, offbeatVolume, swing, mixer }));
     setStatus("Saved");
   }
 
@@ -550,6 +528,7 @@ export default function FlamencoPalmasRhythmBox() {
     setVolume(0.8);
     setOffbeatVolume(0.55);
     setSwing(0);
+    setMixer(DEFAULT_MIXER);
     safeLocalStorageRemove(STORAGE_KEY);
     OLD_STORAGE_KEYS.forEach(safeLocalStorageRemove);
     setStatus("Reset to defaults");
@@ -687,6 +666,8 @@ export default function FlamencoPalmasRhythmBox() {
             <input type="range" min="0" max="70" value={swing} onChange={(e) => setSwing(Number(e.target.value))} style={{ width: "100%" }} />
           </div>
         </div>
+
+        <VoiceMixer mixer={mixer} onChange={(voice, patch) => setMixer((previous) => ({ ...previous, [voice]: { ...previous[voice], ...patch } }))} />
 
         <div style={cardStyle({ overflow: "hidden" })}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
