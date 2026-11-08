@@ -5,6 +5,7 @@ import "./styles.css";
 import { CompasSynth, DEFAULT_MIXER, normalizeMixer } from "./audio.js";
 import VoiceMixer from "./components/VoiceMixer.jsx";
 import { LookaheadTransport } from "./transport.js";
+import PracticeSamples from "./components/PracticeSamples.jsx";
 
 const DEFAULT_PALOS = [
   {
@@ -234,13 +235,14 @@ function Icon({ children }) {
   return <span aria-hidden="true" style={{ display: "inline-block", width: 20, textAlign: "center" }}>{children}</span>;
 }
 
-function AppButton({ children, onClick, disabled, variant = "solid", active = false, style = {} }) {
+function AppButton({ children, onClick, disabled, variant = "solid", active, style = {} }) {
   const isSolid = variant === "solid" || active;
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-pressed={active}
       style={{
         border: `1px solid ${isSolid ? "#18181b" : "#d4d4d8"}`,
         background: isSolid ? "#18181b" : "white",
@@ -484,6 +486,11 @@ export default function FlamencoPalmasRhythmBox() {
     }));
   }
 
+  function applyPracticePattern(exercise) {
+    updateSelectedPalo((palo) => ({ ...palo, pattern: exercise.pattern, offbeatPattern: exercise.offbeatPattern, offbeatEnabled: exercise.offbeatEnabled }));
+    setStatus(`Practice pattern: ${exercise.name}`);
+  }
+
   function updateOffbeatPattern(index) {
     updateSelectedPalo((p) => ({
       ...p,
@@ -609,7 +616,7 @@ export default function FlamencoPalmasRhythmBox() {
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div className="transport-controls" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <AppButton onClick={isPlaying ? stop : start}>
               <Icon>{isPlaying ? "■" : "▶"}</Icon>
               {isPlaying ? "Stop" : "Play"}
@@ -644,18 +651,7 @@ export default function FlamencoPalmasRhythmBox() {
               <SmallButton onClick={() => changeTempo(tempo + 2)}>＋</SmallButton>
             </div>
           </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Main Volume: {Math.round(volume * 100)}%</label>
-            <input aria-label="Main Volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => setVolume(Number(e.target.value))} style={{ width: "100%" }} />
-            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Offbeat Volume: {Math.round(offbeatVolume * 100)}%</label>
-            <input aria-label="Offbeat Volume" type="range" min="0" max="1" step="0.01" value={offbeatVolume} onChange={(e) => setOffbeatVolume(Number(e.target.value))} style={{ width: "100%" }} />
-            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Humanize / Swing: {swing}%</label>
-            <input aria-label="Swing" type="range" min="0" max="70" value={swing} onChange={(e) => setSwing(Number(e.target.value))} style={{ width: "100%" }} />
-          </div>
         </div>
-
-        <VoiceMixer mixer={mixer} onChange={(voice, patch) => setMixer((previous) => ({ ...previous, [voice]: { ...previous[voice], ...patch } }))} />
 
         <div style={cardStyle({ overflow: "hidden" })}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
@@ -676,35 +672,8 @@ export default function FlamencoPalmasRhythmBox() {
                 }}
               />
               <p style={{ fontSize: 14, color: "#71717a", marginTop: 4, marginBottom: 0 }}>
-                上段は表拍、下段は「&」の裏拍。クリックで音を切り替えます。
+                {displayMode === "circle" ? "点をタップして音を編集。大きな濃色の点がアクセントです。" : "上段は表拍、下段は「&」の裏拍。タップで音を切り替えます。"}
               </p>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <select aria-label="拍数" value={selected.beats} onChange={(e) => changeBeats(Number(e.target.value))} style={inputStyle()}>
-                <option value={12}>12 beats</option>
-                <option value={4}>4 beats</option>
-                <option value={3}>3 beats</option>
-              </select>
-              {selected.beats === 12 && (
-                <select
-                  aria-label="数え始め"
-                  value={selected.countFrom}
-                  onChange={(e) => updateSelectedPalo((p) => ({ ...p, countFrom: Number(e.target.value) }))}
-                  style={inputStyle()}
-                >
-                  <option value={1}>count 1-12</option>
-                  <option value={12}>count 12-11</option>
-                </select>
-              )}
-              <AppButton variant="outline" active={selected.offbeatEnabled} onClick={toggleOffbeat}>
-                <Icon>{selected.offbeatEnabled ? "&" : "–"}</Icon>
-                {selected.offbeatEnabled ? "Offbeat ON" : "Offbeat OFF"}
-              </AppButton>
-              <AppButton variant="outline" onClick={addCustomPalo}>Custom</AppButton>
-              <AppButton variant="outline" onClick={deleteCustomPalo} disabled={!selected.id.startsWith("custom")}>
-                <Icon>🗑</Icon> Delete
-              </AppButton>
             </div>
           </div>
 
@@ -716,7 +685,7 @@ export default function FlamencoPalmasRhythmBox() {
             </button>
           </div>
           {blindfold ? <div className="blindfold">音だけでコンパスを追ってみましょう。</div> : displayMode === "circle" ? (
-            <CompasCircle palo={selected} beat={currentBeat} offbeat={currentOffbeat} cursorRef={cursorRef} labelForBeat={labelForBeat} onBeat={updatePattern} onOffbeat={updateOffbeatPattern} />
+            <CompasCircle palo={selected} beat={currentBeat} offbeat={currentOffbeat} cursorRef={cursorRef} labelForBeat={labelForBeat} onBeat={updatePattern} />
           ) : <>
           <div
             style={{
@@ -830,7 +799,49 @@ export default function FlamencoPalmasRhythmBox() {
             <div style={{ borderRadius: 16, background: "#fafafa", border: "1px solid #e4e4e7", color: "#a1a1aa", padding: 12 }}>休：鳴らさない</div>
           </div>
           </>}
+          <details className="editor-settings">
+            <summary>拍数・裏拍・カスタム編集</summary>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <select aria-label="拍数" value={selected.beats} onChange={(e) => changeBeats(Number(e.target.value))} style={inputStyle()}>
+                <option value={12}>12 beats</option>
+                <option value={4}>4 beats</option>
+                <option value={3}>3 beats</option>
+              </select>
+              {selected.beats === 12 && (
+                <select
+                  aria-label="数え始め"
+                  value={selected.countFrom}
+                  onChange={(e) => updateSelectedPalo((p) => ({ ...p, countFrom: Number(e.target.value) }))}
+                  style={inputStyle()}
+                >
+                  <option value={1}>count 1-12</option>
+                  <option value={12}>count 12-11</option>
+                </select>
+              )}
+              <AppButton variant="outline" active={selected.offbeatEnabled} onClick={toggleOffbeat}>
+                <Icon>{selected.offbeatEnabled ? "&" : "–"}</Icon>
+                {selected.offbeatEnabled ? "Offbeat ON" : "Offbeat OFF"}
+              </AppButton>
+              <AppButton variant="outline" onClick={addCustomPalo}>Custom</AppButton>
+              <AppButton variant="outline" onClick={deleteCustomPalo} disabled={!selected.id.startsWith("custom")}>
+                <Icon>🗑</Icon> Delete
+              </AppButton>
+            </div>
+          </details>
+          <PracticeSamples palo={selected} onApply={applyPracticePattern} />
         </div>
+        <VoiceMixer mixer={mixer} onChange={(voice, patch) => setMixer((previous) => ({ ...previous, [voice]: { ...previous[voice], ...patch } }))} />
+        <details style={cardStyle()} className="layer-settings">
+          <summary>表拍・裏拍の音量 / Swing</summary>
+          <div style={{ display: "grid", gap: 8 }}>
+            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Main Volume: {Math.round(volume * 100)}%</label>
+            <input aria-label="Main Volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => setVolume(Number(e.target.value))} style={{ width: "100%" }} />
+            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Offbeat Volume: {Math.round(offbeatVolume * 100)}%</label>
+            <input aria-label="Offbeat Volume" type="range" min="0" max="1" step="0.01" value={offbeatVolume} onChange={(e) => setOffbeatVolume(Number(e.target.value))} style={{ width: "100%" }} />
+            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Humanize / Swing: {swing}%</label>
+            <input aria-label="Swing" type="range" min="0" max="70" value={swing} onChange={(e) => setSwing(Number(e.target.value))} style={{ width: "100%" }} />
+          </div>
+        </details>
       </div>
     </div>
   );

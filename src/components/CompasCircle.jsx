@@ -19,13 +19,13 @@ function activate(event, callback) {
   }
 }
 
-export default function CompasCircle({ palo, beat, offbeat, cursorRef, labelForBeat, onBeat, onOffbeat }) {
+export default function CompasCircle({ palo, beat, offbeat, cursorRef, labelForBeat, onBeat }) {
   return (
     <div className="compas-circle">
       <svg viewBox="0 0 340 340" role="group" aria-label={`${palo.name} ${palo.beats}拍のコンパス`}>
         <circle cx="170" cy="170" r="112" fill="none" stroke="#e4e4e7" strokeWidth="2" />
         <g ref={cursorRef} visibility={beat < 0 ? "hidden" : "visible"} aria-hidden="true" data-cursor="true">
-          <line x1="170" y1="170" x2="170" y2="78" stroke="#d97706" strokeWidth="3" strokeLinecap="round" />
+          <line x1="170" y1="126" x2="170" y2="78" stroke="#d97706" strokeWidth="3" strokeLinecap="round" />
         </g>
         <text x="170" y="163" textAnchor="middle" fontSize="28" fontWeight="800">{palo.beats}拍</text>
         <text x="170" y="190" textAnchor="middle" fontSize="14" fill="#71717a">1周 = 1コンパス</text>
@@ -47,8 +47,7 @@ export default function CompasCircle({ palo, beat, offbeat, cursorRef, labelForB
         {palo.offbeatEnabled && palo.offbeatPattern.map((hit, i) => {
           const point = position(i + 0.5, palo.beats, 112);
           return (
-            <g key={i} role="button" tabIndex="0" aria-label={`円形 裏拍 ${labelForBeat(i, palo.beats, palo.countFrom)} ${hit}`} onClick={() => onOffbeat(i)} onKeyDown={(e) => activate(e, () => onOffbeat(i))} className="circle-beat">
-              <circle cx={point.x} cy={point.y} r="15" fill="transparent" />
+            <g key={i} aria-hidden="true" pointerEvents="none">
               <circle cx={point.x} cy={point.y} r={hit === "rest" ? 3 : hit === "ghost" ? 5 : 7} fill={offbeat === i ? "#d97706" : "#c4b5a0"} />
             </g>
           );
