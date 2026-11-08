@@ -1,0 +1,34 @@
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select { font: inherit; }
+button, select, input[type="range"] { touch-action: manipulation; }
+input[type="range"] { min-width: 0; min-height: 44px; }
+select { min-height: 44px; max-width: 100%; }
+button:focus-visible, [role="button"]:focus-visible { outline: 3px solid #d97706; outline-offset: 3px; }
+.compas-circle { max-width: 430px; margin: 12px auto 0; }
+.compas-circle svg { width: 100%; display: block; overflow: visible; }
+.circle-beat { cursor: pointer; }
+.circle-hint { text-align: center; color: #71717a; font-size: 13px; line-height: 1.7; }
+.blindfold { text-align: center; padding: 64px 16px; color: #52525b; }
+.view-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.voice-mixer { padding: 20px; border: 1px solid #e4e4e7; border-radius: 24px; background: white; }
+.mixer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 16px; }
+.mixer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mixer-heading label { font-size: 14px; font-weight: 700; }
+.mixer-heading button { min-height: 44px; border: 1px solid #d4d4d8; border-radius: 14px; background: white; padding: 8px 12px; cursor: pointer; }
+.mixer-heading button[aria-pressed="true"] { background: #18181b; color: white; }
+.voice-mixer input { width: 100%; }
+.practice-samples { border-top: 1px solid #e4e4e7; margin-top: 20px; padding-top: 12px; }
+.practice-samples summary { cursor: pointer; min-height: 44px; padding: 12px 0; font-weight: 700; }
+.practice-samples p { font-size: 13px; color: #71717a; line-height: 1.7; }
+.practice-option { margin-top: 12px; }
+.practice-option button { min-height: 44px; padding: 10px 14px; border-radius: 14px; border: 1px solid #d4d4d8; background: white; cursor: pointer; }
+.editor-settings, .layer-settings { margin-top: 12px; }
+.editor-settings summary, .layer-settings summary { min-height: 44px; cursor: pointer; padding: 12px 0; font-weight: 700; }
+.editor-settings > div { margin-top: 8px; }
+@media (max-width: 600px) {
+  .app { padding: 12px 12px calc(88px + env(safe-area-inset-bottom)) !important; }
+  .transport-controls { position: fixed; bottom: 0; left: 0; right: 0; z-index: 10; justify-content: center; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); background: rgba(255,255,255,.97); border-top: 1px solid #e4e4e7; }
+  .palo-title { width: 100%; min-width: 0 !important; }
+  .palo-title input { width: 100%; }
+}

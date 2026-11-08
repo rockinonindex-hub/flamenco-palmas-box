@@ -1,4 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import CompasCircle from "./components/CompasCircle.jsx";
+import { useCompasDisplay } from "./hooks/useCompasDisplay.js";
+import "./styles.css";
+import { CompasSynth, DEFAULT_MIXER, normalizeMixer } from "./audio.js";
+import VoiceMixer from "./components/VoiceMixer.jsx";
+import { LookaheadTransport } from "./transport.js";
+import PracticeSamples from "./components/PracticeSamples.jsx";
 
 const DEFAULT_PALOS = [
   {
@@ -225,16 +232,17 @@ function runSelfTests() {
 }
 
 function Icon({ children }) {
-  return <span style={{ display: "inline-block", width: 20, textAlign: "center" }}>{children}</span>;
+  return <span aria-hidden="true" style={{ display: "inline-block", width: 20, textAlign: "center" }}>{children}</span>;
 }
 
-function AppButton({ children, onClick, disabled, variant = "solid", active = false, style = {} }) {
+function AppButton({ children, onClick, disabled, variant = "solid", active, style = {} }) {
   const isSolid = variant === "solid" || active;
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-pressed={active}
       style={{
         border: `1px solid ${isSolid ? "#18181b" : "#d4d4d8"}`,
         background: isSolid ? "#18181b" : "white",
@@ -248,7 +256,7 @@ function AppButton({ children, onClick, disabled, variant = "solid", active = fa
         alignItems: "center",
         justifyContent: "center",
         gap: 6,
-        minHeight: 42,
+        minHeight: 44,
         ...style,
       }}
     >
@@ -263,8 +271,8 @@ function SmallButton({ children, onClick }) {
       type="button"
       onClick={onClick}
       style={{
-        width: 38,
-        height: 38,
+        minWidth: 44,
+        height: 44,
         borderRadius: 14,
         border: "1px solid #d4d4d8",
         background: "white",
@@ -330,22 +338,21 @@ export default function FlamencoPalmasRhythmBox() {
   const [selectedId, setSelectedId] = useState("solea");
   const [tempo, setTempo] = useState(92);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentBeat, setCurrentBeat] = useState(-1);
-  const [currentOffbeat, setCurrentOffbeat] = useState(-1);
+  const [displayMode, setDisplayMode] = useState("circle");
+  const [blindfold, setBlindfold] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [offbeatVolume, setOffbeatVolume] = useState(0.55);
   const [swing, setSwing] = useState(0);
   const [status, setStatus] = useState("Ready");
+  const [mixer, setMixer] = useState(DEFAULT_MIXER);
 
   const audioRef = useRef(null);
-  const timerRef = useRef(null);
-  const beatRef = useRef(0);
-  const nextTimeRef = useRef(0);
-  const tempoRef = useRef(tempo);
-  const selectedRef = useRef(null);
-  const volumeRef = useRef(volume);
-  const offbeatVolumeRef = useRef(offbeatVolume);
-  const swingRef = useRef(swing);
+  const synthRef = useRef(null);
+  const timelineRef = useRef([]);
+  const { beat: currentBeat, offbeat: currentOffbeat, cursorRef } = useCompasDisplay(audioRef, timelineRef, isPlaying);
+  const transportRef = useRef(null);
+  const startTokenRef = useRef(0);
+  const settingsRef = useRef(null);
 
   const selected = useMemo(() => palos.find((p) => p.id === selectedId) || palos[0], [palos, selectedId]);
 
@@ -367,6 +374,7 @@ export default function FlamencoPalmasRhythmBox() {
       if (typeof parsed.tempo === "number") setTempo(Math.min(240, Math.max(40, parsed.tempo)));
       if (typeof parsed.volume === "number") setVolume(Math.min(1, Math.max(0, parsed.volume)));
       if (typeof parsed.offbeatVolume === "number") setOffbeatVolume(Math.min(1, Math.max(0, parsed.offbeatVolume)));
+      setMixer(normalizeMixer(parsed.mixer));
       if (typeof parsed.swing === "number") setSwing(Math.min(70, Math.max(0, parsed.swing)));
       setStatus("Saved settings loaded");
     } catch (_) {
@@ -375,138 +383,96 @@ export default function FlamencoPalmasRhythmBox() {
   }, []);
 
   useEffect(() => {
-    tempoRef.current = tempo;
-    selectedRef.current = selected;
-    volumeRef.current = volume;
-    offbeatVolumeRef.current = offbeatVolume;
-    swingRef.current = swing;
+    settingsRef.current = { palo: selected, tempo, volume, offbeatVolume, swing };
   }, [tempo, selected, volume, offbeatVolume, swing]);
 
   useEffect(() => {
-    if (!selected) return;
-    setTempo(selected.tempo);
-    beatRef.current = 0;
-    setCurrentBeat(-1);
-    setCurrentOffbeat(-1);
-  }, [selectedId]);
+    synthRef.current?.setMixer(mixer);
+  }, [mixer]);
+
+  // Switching palo/meter cancels queued notes and starts the new compás at beat 1.
+  useEffect(() => {
+    timelineRef.current = [];
+    if (transportRef.current?.running) transportRef.current.start();
+  }, [selectedId, selected?.beats]);
 
   useEffect(() => {
     return () => {
-      if (timerRef.current) window.clearInterval(timerRef.current);
-      timerRef.current = null;
+      startTokenRef.current += 1;
+      transportRef.current?.stop();
+      synthRef.current?.dispose();
+      if (audioRef.current) {
+        audioRef.current.onstatechange = null;
+        audioRef.current.close().catch(() => {});
+      }
     };
   }, []);
 
   function ensureAudio() {
-    if (typeof window === "undefined") return null;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) {
-      setStatus("This browser does not support Web Audio API");
-      return null;
-    }
-
+    if (!AudioContextClass) throw new Error("This browser does not support Web Audio API");
     if (!audioRef.current) {
-      audioRef.current = new AudioContextClass();
+      const ctx = new AudioContextClass({ latencyHint: "interactive" });
+      audioRef.current = ctx;
+      synthRef.current = new CompasSynth(ctx, mixer);
+      ctx.onstatechange = () => {
+        if (ctx.state !== "running" && transportRef.current?.running) {
+          stop();
+          setStatus("Audio interrupted — tap Play to resume");
+        }
+      };
+      transportRef.current = new LookaheadTransport(
+        ctx,
+        synthRef.current,
+        () => settingsRef.current,
+        (event) => {
+          const timeline = timelineRef.current;
+          while (timeline.length > 1 && timeline[1].time <= ctx.currentTime) timeline.shift();
+          timeline.push(event);
+        },
+        (error) => {
+          timelineRef.current = [];
+          setIsPlaying(false);
+          setStatus(`Playback failed: ${error.message}`);
+        },
+      );
     }
-    if (audioRef.current.state === "suspended") audioRef.current.resume();
     return audioRef.current;
   }
 
-  function noiseBuffer(ctx, seconds = 0.045) {
-    const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    for (let i = 0; i < data.length; i += 1) {
-      const fade = Math.pow(1 - i / data.length, 2.2);
-      data[i] = (Math.random() * 2 - 1) * fade;
-    }
-    return buffer;
-  }
-
-  function playClap(time, type, layer = "main") {
-    if (type === "rest") return;
-
-    const ctx = ensureAudio();
-    if (!ctx) return;
-
-    const source = ctx.createBufferSource();
-    const gain = ctx.createGain();
-    const filter = ctx.createBiquadFilter();
-
-    const isOffbeat = layer === "offbeat";
-    source.buffer = noiseBuffer(ctx, type === "accent" ? 0.06 : isOffbeat ? 0.032 : 0.04);
-    filter.type = "bandpass";
-    filter.frequency.value = type === "accent" ? 1900 : type === "ghost" ? (isOffbeat ? 1350 : 1200) : 1500;
-    filter.Q.value = type === "accent" ? 1.25 : 0.9;
-
-    const baseAmp = type === "accent" ? 0.85 : type === "ghost" ? 0.22 : 0.48;
-    const layerVolume = isOffbeat ? offbeatVolumeRef.current : volumeRef.current;
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, baseAmp * layerVolume), time + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + (type === "accent" ? 0.075 : isOffbeat ? 0.04 : 0.05));
-
-    source.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    source.start(time);
-  }
-
-  function schedule() {
-    const ctx = ensureAudio();
-    const palo = selectedRef.current;
-    if (!ctx || !palo) return;
-
-    const lookAhead = 0.12;
-    while (nextTimeRef.current < ctx.currentTime + lookAhead) {
-      const beatIndex = beatRef.current % palo.beats;
-      const hit = palo.pattern[beatIndex] || "rest";
-      playClap(nextTimeRef.current, hit, "main");
-
-      const base = 60 / tempoRef.current;
-      const swingAmount = swingRef.current / 100;
-      const addSwing = beatIndex % 2 === 0 ? base * swingAmount * 0.18 : -base * swingAmount * 0.18;
-      const beatDuration = Math.max(0.08, base + addSwing);
-
-      if (palo.offbeatEnabled) {
-        const offbeatHit = palo.offbeatPattern[beatIndex] || "rest";
-        const offbeatTime = nextTimeRef.current + beatDuration / 2;
-        playClap(offbeatTime, offbeatHit, "offbeat");
-
-        const offbeatDelay = Math.max(0, (offbeatTime - ctx.currentTime) * 1000);
-        window.setTimeout(() => setCurrentOffbeat(beatIndex), offbeatDelay);
-        window.setTimeout(() => setCurrentOffbeat(-1), offbeatDelay + Math.min(120, beatDuration * 500));
-      }
-
-      const uiDelay = Math.max(0, (nextTimeRef.current - ctx.currentTime) * 1000);
-      window.setTimeout(() => setCurrentBeat(beatIndex), uiDelay);
-
-      nextTimeRef.current += beatDuration;
-      beatRef.current += 1;
-    }
-  }
-
-  function start() {
-    const ctx = ensureAudio();
-    if (!ctx) return;
-
-    if (timerRef.current) window.clearInterval(timerRef.current);
+  async function start() {
+    const token = ++startTokenRef.current;
     setIsPlaying(true);
-    setStatus("Playing");
-    beatRef.current = 0;
-    nextTimeRef.current = ctx.currentTime + 0.05;
-    schedule();
-    timerRef.current = window.setInterval(schedule, 25);
+    setStatus("Starting audio…");
+    try {
+      const ctx = ensureAudio();
+      // Called from a tap, and awaited before scheduling (important on iOS).
+      if (ctx.state !== "running") await ctx.resume();
+      if (token !== startTokenRef.current) return;
+      if (ctx.state !== "running") throw new Error("Audio could not be resumed; tap Play again");
+      timelineRef.current = [];
+      transportRef.current.start();
+      if (transportRef.current.running) setStatus("Playing");
+    } catch (error) {
+      if (token !== startTokenRef.current) return;
+      setIsPlaying(false);
+      setStatus(`Playback failed: ${error.message}`);
+    }
   }
 
   function stop() {
+    startTokenRef.current += 1;
+    transportRef.current?.stop();
     setIsPlaying(false);
     setStatus("Stopped");
-    setCurrentBeat(-1);
-    setCurrentOffbeat(-1);
-    beatRef.current = 0;
-    if (timerRef.current) window.clearInterval(timerRef.current);
-    timerRef.current = null;
+    timelineRef.current = [];
+  }
+
+  function selectPalo(id) {
+    const palo = palos.find((entry) => entry.id === id);
+    if (!palo) return;
+    setSelectedId(id);
+    setTempo(palo.tempo);
   }
 
   function updateSelectedPalo(updater) {
@@ -520,6 +486,11 @@ export default function FlamencoPalmasRhythmBox() {
     }));
   }
 
+  function applyPracticePattern(exercise) {
+    updateSelectedPalo((palo) => ({ ...palo, pattern: exercise.pattern, offbeatPattern: exercise.offbeatPattern, offbeatEnabled: exercise.offbeatEnabled }));
+    setStatus(`Practice pattern: ${exercise.name}`);
+  }
+
   function updateOffbeatPattern(index) {
     updateSelectedPalo((p) => ({
       ...p,
@@ -529,7 +500,6 @@ export default function FlamencoPalmasRhythmBox() {
 
   function toggleOffbeat() {
     updateSelectedPalo((p) => ({ ...p, offbeatEnabled: !p.offbeatEnabled }));
-    setCurrentOffbeat(-1);
   }
 
   function setAllOffbeats(value) {
@@ -539,7 +509,7 @@ export default function FlamencoPalmasRhythmBox() {
   function savePreset() {
     const updatedPalos = palos.map((p) => (p.id === selectedId ? { ...p, tempo } : p)).map(normalizePalo);
     setPalos(updatedPalos);
-    safeLocalStorageSet(STORAGE_KEY, JSON.stringify({ palos: updatedPalos, selectedId, tempo, volume, offbeatVolume, swing }));
+    safeLocalStorageSet(STORAGE_KEY, JSON.stringify({ palos: updatedPalos, selectedId, tempo, volume, offbeatVolume, swing, mixer }));
     setStatus("Saved");
   }
 
@@ -551,6 +521,7 @@ export default function FlamencoPalmasRhythmBox() {
     setVolume(0.8);
     setOffbeatVolume(0.55);
     setSwing(0);
+    setMixer(DEFAULT_MIXER);
     safeLocalStorageRemove(STORAGE_KEY);
     OLD_STORAGE_KEYS.forEach(safeLocalStorageRemove);
     setStatus("Reset to defaults");
@@ -578,6 +549,7 @@ export default function FlamencoPalmasRhythmBox() {
     stop();
     setPalos((prev) => prev.filter((p) => p.id !== selected.id));
     setSelectedId("solea");
+    setTempo(palos.find((p) => p.id === "solea")?.tempo || 92);
     setStatus("Custom palo deleted");
   }
 
@@ -591,13 +563,13 @@ export default function FlamencoPalmasRhythmBox() {
       const nextOffbeatPattern = Array.from({ length: beats }, (_, i) => p.offbeatPattern[i] || "ghost");
       return { ...p, beats, pattern: nextPattern, offbeatPattern: nextOffbeatPattern, countFrom: beats === 12 ? p.countFrom : 1 };
     });
-    beatRef.current = 0;
-    setCurrentBeat(-1);
-    setCurrentOffbeat(-1);
+    timelineRef.current = [];
   }
 
   function changeTempo(nextTempo) {
-    const cleanTempo = Math.min(240, Math.max(40, Number(nextTempo)));
+    const value = Number(nextTempo);
+    if (!Number.isFinite(value)) return;
+    const cleanTempo = Math.min(240, Math.max(40, value));
     setTempo(cleanTempo);
     updateSelectedPalo((p) => ({ ...p, tempo: cleanTempo }));
   }
@@ -608,6 +580,7 @@ export default function FlamencoPalmasRhythmBox() {
 
   return (
     <div
+      className="app"
       style={{
         minHeight: "100vh",
         background: "linear-gradient(135deg, #fafaf9 0%, #f4f4f5 50%, #f5f5f4 100%)",
@@ -643,7 +616,7 @@ export default function FlamencoPalmasRhythmBox() {
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div className="transport-controls" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <AppButton onClick={isPlaying ? stop : start}>
               <Icon>{isPlaying ? "■" : "▶"}</Icon>
               {isPlaying ? "Stop" : "Play"}
@@ -660,7 +633,7 @@ export default function FlamencoPalmasRhythmBox() {
         <div style={cardStyle({ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 20 })}>
           <div style={{ display: "grid", gap: 8 }}>
             <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Palo</label>
-            <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)} style={inputStyle({ width: "100%" })}>
+            <select aria-label="Palo" value={selectedId} onChange={(e) => selectPalo(e.target.value)} style={inputStyle({ width: "100%" })}>
               {palos.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -674,25 +647,17 @@ export default function FlamencoPalmasRhythmBox() {
             <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Tempo: {tempo} BPM</label>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <SmallButton onClick={() => changeTempo(tempo - 2)}>−</SmallButton>
-              <input type="range" min="40" max="240" value={tempo} onChange={(e) => changeTempo(Number(e.target.value))} style={{ width: "100%" }} />
+              <input aria-label="BPM" type="range" min="40" max="240" value={tempo} onChange={(e) => changeTempo(Number(e.target.value))} style={{ width: "100%" }} />
               <SmallButton onClick={() => changeTempo(tempo + 2)}>＋</SmallButton>
             </div>
-          </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Main Volume: {Math.round(volume * 100)}%</label>
-            <input type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => setVolume(Number(e.target.value))} style={{ width: "100%" }} />
-            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Offbeat Volume: {Math.round(offbeatVolume * 100)}%</label>
-            <input type="range" min="0" max="1" step="0.01" value={offbeatVolume} onChange={(e) => setOffbeatVolume(Number(e.target.value))} style={{ width: "100%" }} />
-            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Humanize / Swing: {swing}%</label>
-            <input type="range" min="0" max="70" value={swing} onChange={(e) => setSwing(Number(e.target.value))} style={{ width: "100%" }} />
           </div>
         </div>
 
         <div style={cardStyle({ overflow: "hidden" })}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ minWidth: 220 }}>
+            <div className="palo-title" style={{ minWidth: 220 }}>
               <input
+                aria-label="パロ名"
                 value={selected.name}
                 onChange={(e) => renameSelected(e.target.value)}
                 style={{
@@ -707,37 +672,21 @@ export default function FlamencoPalmasRhythmBox() {
                 }}
               />
               <p style={{ fontSize: 14, color: "#71717a", marginTop: 4, marginBottom: 0 }}>
-                上段は表拍、下段は「&」の裏拍。クリックで音を切り替えます。
+                {displayMode === "circle" ? "点をタップして音を編集。大きな濃色の点がアクセントです。" : "上段は表拍、下段は「&」の裏拍。タップで音を切り替えます。"}
               </p>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <select value={selected.beats} onChange={(e) => changeBeats(Number(e.target.value))} style={inputStyle()}>
-                <option value={12}>12 beats</option>
-                <option value={4}>4 beats</option>
-                <option value={3}>3 beats</option>
-              </select>
-              {selected.beats === 12 && (
-                <select
-                  value={selected.countFrom}
-                  onChange={(e) => updateSelectedPalo((p) => ({ ...p, countFrom: Number(e.target.value) }))}
-                  style={inputStyle()}
-                >
-                  <option value={1}>count 1-12</option>
-                  <option value={12}>count 12-11</option>
-                </select>
-              )}
-              <AppButton variant="outline" active={selected.offbeatEnabled} onClick={toggleOffbeat}>
-                <Icon>{selected.offbeatEnabled ? "&" : "–"}</Icon>
-                {selected.offbeatEnabled ? "Offbeat ON" : "Offbeat OFF"}
-              </AppButton>
-              <AppButton variant="outline" onClick={addCustomPalo}>Custom</AppButton>
-              <AppButton variant="outline" onClick={deleteCustomPalo} disabled={!selected.id.startsWith("custom")}>
-                <Icon>🗑</Icon> Delete
-              </AppButton>
             </div>
           </div>
 
+          <div className="view-controls" role="group" aria-label="表示設定">
+            <AppButton variant="outline" active={displayMode === "circle"} onClick={() => setDisplayMode("circle")}>輪っか表示</AppButton>
+            <AppButton variant="outline" active={displayMode === "grid"} onClick={() => setDisplayMode("grid")}>従来の表示</AppButton>
+            <button type="button" role="switch" aria-checked={blindfold} onClick={() => setBlindfold((value) => !value)} style={inputStyle({ minHeight: 44, cursor: "pointer" })}>
+              目隠しモード {blindfold ? "ON" : "OFF"}
+            </button>
+          </div>
+          {blindfold ? <div className="blindfold">音だけでコンパスを追ってみましょう。</div> : displayMode === "circle" ? (
+            <CompasCircle palo={selected} beat={currentBeat} offbeat={currentOffbeat} cursorRef={cursorRef} labelForBeat={labelForBeat} onBeat={updatePattern} />
+          ) : <>
           <div
             style={{
               display: "grid",
@@ -849,7 +798,50 @@ export default function FlamencoPalmasRhythmBox() {
             <div style={{ borderRadius: 16, background: "#f4f4f5", border: "1px dashed #a1a1aa", padding: 12 }}>裏：小さな裏拍パルマ</div>
             <div style={{ borderRadius: 16, background: "#fafafa", border: "1px solid #e4e4e7", color: "#a1a1aa", padding: 12 }}>休：鳴らさない</div>
           </div>
+          </>}
+          <details className="editor-settings">
+            <summary>拍数・裏拍・カスタム編集</summary>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <select aria-label="拍数" value={selected.beats} onChange={(e) => changeBeats(Number(e.target.value))} style={inputStyle()}>
+                <option value={12}>12 beats</option>
+                <option value={4}>4 beats</option>
+                <option value={3}>3 beats</option>
+              </select>
+              {selected.beats === 12 && (
+                <select
+                  aria-label="数え始め"
+                  value={selected.countFrom}
+                  onChange={(e) => updateSelectedPalo((p) => ({ ...p, countFrom: Number(e.target.value) }))}
+                  style={inputStyle()}
+                >
+                  <option value={1}>count 1-12</option>
+                  <option value={12}>count 12-11</option>
+                </select>
+              )}
+              <AppButton variant="outline" active={selected.offbeatEnabled} onClick={toggleOffbeat}>
+                <Icon>{selected.offbeatEnabled ? "&" : "–"}</Icon>
+                {selected.offbeatEnabled ? "Offbeat ON" : "Offbeat OFF"}
+              </AppButton>
+              <AppButton variant="outline" onClick={addCustomPalo}>Custom</AppButton>
+              <AppButton variant="outline" onClick={deleteCustomPalo} disabled={!selected.id.startsWith("custom")}>
+                <Icon>🗑</Icon> Delete
+              </AppButton>
+            </div>
+          </details>
+          <PracticeSamples palo={selected} onApply={applyPracticePattern} />
         </div>
+        <VoiceMixer mixer={mixer} onChange={(voice, patch) => setMixer((previous) => ({ ...previous, [voice]: { ...previous[voice], ...patch } }))} />
+        <details style={cardStyle()} className="layer-settings">
+          <summary>表拍・裏拍の音量 / Swing</summary>
+          <div style={{ display: "grid", gap: 8 }}>
+            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Main Volume: {Math.round(volume * 100)}%</label>
+            <input aria-label="Main Volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => setVolume(Number(e.target.value))} style={{ width: "100%" }} />
+            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Offbeat Volume: {Math.round(offbeatVolume * 100)}%</label>
+            <input aria-label="Offbeat Volume" type="range" min="0" max="1" step="0.01" value={offbeatVolume} onChange={(e) => setOffbeatVolume(Number(e.target.value))} style={{ width: "100%" }} />
+            <label style={{ fontSize: 14, fontWeight: 700, color: "#52525b" }}>Humanize / Swing: {swing}%</label>
+            <input aria-label="Swing" type="range" min="0" max="70" value={swing} onChange={(e) => setSwing(Number(e.target.value))} style={{ width: "100%" }} />
+          </div>
+        </details>
       </div>
     </div>
   );
