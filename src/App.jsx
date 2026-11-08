@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import CompasCircle from "./components/CompasCircle.jsx";
+import { useCompasDisplay } from "./hooks/useCompasDisplay.js";
+import "./styles.css";
 
 const DEFAULT_PALOS = [
   {
@@ -248,7 +251,7 @@ function AppButton({ children, onClick, disabled, variant = "solid", active = fa
         alignItems: "center",
         justifyContent: "center",
         gap: 6,
-        minHeight: 42,
+        minHeight: 44,
         ...style,
       }}
     >
@@ -263,8 +266,8 @@ function SmallButton({ children, onClick }) {
       type="button"
       onClick={onClick}
       style={{
-        width: 38,
-        height: 38,
+        minWidth: 44,
+        height: 44,
         borderRadius: 14,
         border: "1px solid #d4d4d8",
         background: "white",
@@ -330,14 +333,16 @@ export default function FlamencoPalmasRhythmBox() {
   const [selectedId, setSelectedId] = useState("solea");
   const [tempo, setTempo] = useState(92);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentBeat, setCurrentBeat] = useState(-1);
-  const [currentOffbeat, setCurrentOffbeat] = useState(-1);
+  const [displayMode, setDisplayMode] = useState("circle");
+  const [blindfold, setBlindfold] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [offbeatVolume, setOffbeatVolume] = useState(0.55);
   const [swing, setSwing] = useState(0);
   const [status, setStatus] = useState("Ready");
 
   const audioRef = useRef(null);
+  const timelineRef = useRef([]);
+  const { beat: currentBeat, offbeat: currentOffbeat, cursorRef } = useCompasDisplay(audioRef, timelineRef, isPlaying);
   const timerRef = useRef(null);
   const beatRef = useRef(0);
   const nextTimeRef = useRef(0);
@@ -386,8 +391,7 @@ export default function FlamencoPalmasRhythmBox() {
     if (!selected) return;
     setTempo(selected.tempo);
     beatRef.current = 0;
-    setCurrentBeat(-1);
-    setCurrentOffbeat(-1);
+    timelineRef.current = [];
   }, [selectedId]);
 
   useEffect(() => {
@@ -473,13 +477,9 @@ export default function FlamencoPalmasRhythmBox() {
         const offbeatTime = nextTimeRef.current + beatDuration / 2;
         playClap(offbeatTime, offbeatHit, "offbeat");
 
-        const offbeatDelay = Math.max(0, (offbeatTime - ctx.currentTime) * 1000);
-        window.setTimeout(() => setCurrentOffbeat(beatIndex), offbeatDelay);
-        window.setTimeout(() => setCurrentOffbeat(-1), offbeatDelay + Math.min(120, beatDuration * 500));
       }
 
-      const uiDelay = Math.max(0, (nextTimeRef.current - ctx.currentTime) * 1000);
-      window.setTimeout(() => setCurrentBeat(beatIndex), uiDelay);
+      timelineRef.current.push({ time: nextTimeRef.current, duration: beatDuration, beat: beatIndex, beats: palo.beats, offbeat: palo.offbeatEnabled });
 
       nextTimeRef.current += beatDuration;
       beatRef.current += 1;
@@ -494,6 +494,7 @@ export default function FlamencoPalmasRhythmBox() {
     setIsPlaying(true);
     setStatus("Playing");
     beatRef.current = 0;
+    timelineRef.current = [];
     nextTimeRef.current = ctx.currentTime + 0.05;
     schedule();
     timerRef.current = window.setInterval(schedule, 25);
@@ -502,8 +503,7 @@ export default function FlamencoPalmasRhythmBox() {
   function stop() {
     setIsPlaying(false);
     setStatus("Stopped");
-    setCurrentBeat(-1);
-    setCurrentOffbeat(-1);
+    timelineRef.current = [];
     beatRef.current = 0;
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = null;
@@ -529,7 +529,6 @@ export default function FlamencoPalmasRhythmBox() {
 
   function toggleOffbeat() {
     updateSelectedPalo((p) => ({ ...p, offbeatEnabled: !p.offbeatEnabled }));
-    setCurrentOffbeat(-1);
   }
 
   function setAllOffbeats(value) {
@@ -592,8 +591,7 @@ export default function FlamencoPalmasRhythmBox() {
       return { ...p, beats, pattern: nextPattern, offbeatPattern: nextOffbeatPattern, countFrom: beats === 12 ? p.countFrom : 1 };
     });
     beatRef.current = 0;
-    setCurrentBeat(-1);
-    setCurrentOffbeat(-1);
+    timelineRef.current = [];
   }
 
   function changeTempo(nextTempo) {
@@ -608,6 +606,7 @@ export default function FlamencoPalmasRhythmBox() {
 
   return (
     <div
+      className="app"
       style={{
         minHeight: "100vh",
         background: "linear-gradient(135deg, #fafaf9 0%, #f4f4f5 50%, #f5f5f4 100%)",
@@ -691,7 +690,7 @@ export default function FlamencoPalmasRhythmBox() {
 
         <div style={cardStyle({ overflow: "hidden" })}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ minWidth: 220 }}>
+            <div className="palo-title" style={{ minWidth: 220 }}>
               <input
                 value={selected.name}
                 onChange={(e) => renameSelected(e.target.value)}
@@ -738,6 +737,16 @@ export default function FlamencoPalmasRhythmBox() {
             </div>
           </div>
 
+          <div className="view-controls" role="group" aria-label="表示設定">
+            <AppButton variant="outline" active={displayMode === "circle"} onClick={() => setDisplayMode("circle")}>輪っか表示</AppButton>
+            <AppButton variant="outline" active={displayMode === "grid"} onClick={() => setDisplayMode("grid")}>従来の表示</AppButton>
+            <button type="button" role="switch" aria-checked={blindfold} onClick={() => setBlindfold((value) => !value)} style={inputStyle({ minHeight: 44, cursor: "pointer" })}>
+              目隠しモード {blindfold ? "ON" : "OFF"}
+            </button>
+          </div>
+          {blindfold ? <div className="blindfold">音だけでコンパスを追ってみましょう。</div> : displayMode === "circle" ? (
+            <CompasCircle palo={selected} beat={currentBeat} offbeat={currentOffbeat} cursorRef={cursorRef} labelForBeat={labelForBeat} onBeat={updatePattern} onOffbeat={updateOffbeatPattern} />
+          ) : <>
           <div
             style={{
               display: "grid",
@@ -849,6 +858,7 @@ export default function FlamencoPalmasRhythmBox() {
             <div style={{ borderRadius: 16, background: "#f4f4f5", border: "1px dashed #a1a1aa", padding: 12 }}>裏：小さな裏拍パルマ</div>
             <div style={{ borderRadius: 16, background: "#fafafa", border: "1px solid #e4e4e7", color: "#a1a1aa", padding: 12 }}>休：鳴らさない</div>
           </div>
+          </>}
         </div>
       </div>
     </div>
