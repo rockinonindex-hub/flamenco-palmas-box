@@ -21,7 +21,8 @@ export function useCompasDisplay(audioRef, timelineRef, isPlaying) {
       if (event && event.time <= now && now < event.time + event.duration) {
         const progress = (now - event.time) / event.duration;
         setBeat(event.beat);
-        setOffbeat(event.offbeat && progress >= 0.5 && progress < 0.75 ? event.beat : -1);
+        const offbeatPhase = event.offbeatPhase ?? 0.5;
+        setOffbeat(event.offbeat && progress >= offbeatPhase && progress < offbeatPhase + 0.25 ? event.beat : -1);
         cursorRef.current?.setAttribute("transform", `rotate(${((event.beat + progress) / event.beats) * 360} 170 170)`);
       } else {
         setBeat(-1);

@@ -19,7 +19,7 @@ export default function VoiceMixer({ mixer, onChange }) {
           </div>
         ))}
       </div>
-      <p style={{ color: "#71717a", fontSize: 13, marginBottom: 0 }}>強拍はクララ＋カホン低音、通常拍・ゴーストはソルダ＋スラップ。裏拍はパルマスのみ。</p>
+      <p style={{ color: "#71717a", fontSize: 13, marginBottom: 0 }}>強拍はクララ＋カホン低音。通常拍・弱拍はソルダと、0始まりの偶数拍に弱いカホン。裏拍はソルダのみ。</p>
     </section>
   );
 }
